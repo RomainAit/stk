@@ -50,13 +50,14 @@ end
 mu = mu - u;
 
 % Variance
-var = sqrt(sum((crosscov*inv(cov)).*crosscov, 2));
+var = sqrt(sum((crosscov/cov).*crosscov, 2));
 
 % Compute the probability p that the response at xt is below U and q = 1 - p
-[q, p] = stk_distrib_normal_cdf (0, mu, var);
+[p, q] = stk_distrib_normal_cdf (0, mu, var);
 
 % Ponctual probability of change
-M = (mu >= 0).*q + (mu < 0).*p;
+indicator = (mu > 0);
+M = indicator.*p + (1-indicator).*q;
 
 % EEM
 M = mean(M);

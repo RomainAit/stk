@@ -57,7 +57,6 @@ stk_disp_examplewelcome
 
 %% Problem definition
 
-
 % 1D test function 
 f = @(x) -stk_testfun_threehumpscamel(x);
 x_domain = stk_hrect ([[-2; 2], [-2; 2]], {'x1', 'x2'});
@@ -65,46 +64,57 @@ x_domain = stk_hrect ([[-2; 2], [-2; 2]], {'x1', 'x2'});
 % Threshold
 z_crit =-1;
 
+% Noise standard deviation
+noise_std = 0.1;
 
-% Test and plot points
+%% Algorithms parameters
+
+% Size of initial design and number of queried points
+n_init = 10;
+NB_ITER = 20;
+
+% Size of the set for criteria approximation
+n_points = 500;
+
+%% GP priors
+
+model_sur = stk_model (@stk_materncov_aniso, 2);
+model_eem = stk_model (@stk_materncov_aniso, 2);
+
+%% Performance evaluation and plots parameters
+
+% Grid for evaluation and plotting
 n_dim = 50;
 grid = stk_sampling_regulargrid(n_dim^2, 2, x_domain);
 x1_grid = unique(double(grid(:,1)));
 x2_grid = unique(double(grid(:,2)));
 z_grid = double(f(grid));
 
-%stats saving tabs
+% Arrays for storing computation time and accuracy
 time_sur = [];
 time_eem = [];
-misc_sur = [];
-misc_eem = [];
 
+accuracy_sur = [];
+accuracy_eem = [];
 
 
 %% Initial design of experiments
 
-% Start with an initial design of N0 points, regularly spaced on the domain.
-n_init = 10;
+% Start with an initial design of n_init points, regularly spaced on the domain.
 x_init = double(stk_sampling_maximinlhs(n_init, 2, x_domain));
 
-
 % Values of the function on the initial design
-z_init = f(x_init) + normrnd(0, 0.25, n_init, 1);
+z_init = f(x_init) + normrnd(0, noise_std, n_init, 1);
+
+% Storing initial design and observations.
 x_obs_sur = [x_init];
 x_obs_eem = [x_init];
 z_obs_sur = [z_init];
 z_obs_eem = [z_init];
 
-%% GP priors
-model_sur = stk_model (@stk_materncov_aniso, 2);
-model_eem = stk_model (@stk_materncov_aniso, 2);
 
 
 %% Sequential design of experiments
-
-% Iteration number & maximal number of points to be added adaptively
-NB_ITER = 20;
-
 
 % Prepare monitoring plot
 h_monit = stk_figure ('stk_example_doe07: Monitor');
@@ -115,9 +125,8 @@ for iter = 0:NB_ITER
     fprintf ('| Current sample size: n = %d\n', n_init + iter);
 
     % Candidate & approx. points
-    n_points = 500;
     xt = double(stk_sampling_randomlhs(n_points, 2, x_domain));
-    zt = f(xt) + normrnd(0, 0.25, size(xt, 1), 1); %noisy evaluations
+    zt = f(xt) + normrnd(0, noise_std, size(xt, 1), 1); %noisy evaluations
 
     % Fitting Gaussian process
 
@@ -127,7 +136,7 @@ for iter = 0:NB_ITER
     model_eem.lognoisevariance = nan;
     model_eem = stk_param_estim(model_eem, x_obs_eem, z_obs_eem);
 
-    % Trick: add a small "regularization" noise to our model
+
 
     % SUR criterion
     crit_sur = zeros(size(xt,1), 1);
@@ -164,52 +173,66 @@ for iter = 0:NB_ITER
     time_eem = [time_eem, toc];
 
 
-    % Pick the point where the criterion is maximal
+    % Pick the point where the criterion is minimal (SUR) or maximal (EEM)
     [crit_min, i_min] = min (crit_sur);
     [crit_max, i_max] = max (crit_eem);
 
     % Compute misclassification proportion
     pred_mean_sur = stk_predict(model_sur, x_obs_sur, z_obs_sur, grid).mean;
     pred_mean_eem = stk_predict(model_eem, x_obs_eem, z_obs_eem, grid).mean;
-    misc_sur = [misc_sur, mean((pred_mean_sur >= z_crit) ~= (z_grid >= z_crit))];
-    misc_eem = [misc_eem, mean((pred_mean_eem >= z_crit) ~= (z_grid >= z_crit))];
+    accuracy_sur = [accuracy_sur, mean((pred_mean_sur > z_crit) == (z_grid > z_crit))];
+    accuracy_eem = [accuracy_eem, mean((pred_mean_eem > z_crit) == (z_grid > z_crit))];
 
-    % Figure: upper panels
+    %% Figure: upper panels
+
+     % True function, true boundary (black line), estimated boundary (red line)
+    % initial design (black dots), sequential design (red dots) and chosen
+    % point (yellow dot) for SUR criterion.
     figure (h_monit);  subplot (2, 2, 1);  cla;
     pcolor(x1_grid, x2_grid', reshape(z_grid, n_dim, n_dim)); hold on;
     contour(x1_grid, x2_grid', reshape((z_grid >= z_crit), n_dim, n_dim), 'LineColor', 'black'); hold on
     contour(x1_grid, x2_grid', reshape((pred_mean_sur >= z_crit), n_dim, n_dim), 'LineColor', 'red'); hold on;
-    scatter(x_obs_sur(:,1), x_obs_sur(:,2), "MarkerFaceColor", "red"); hold on;
+    scatter(x_obs_sur(1:n_init,1), x_obs_sur(1:n_init,2), "MarkerFaceColor", "black"); hold on;
+    scatter(x_obs_sur(n_init+1:n_init+iter,1), x_obs_sur(n_init+1:n_init+iter,2), "MarkerFaceColor", "red"); hold on;
     scatter(xt(i_min,1), xt(i_min,2), 'MarkerFaceColor', 'y');
     colormap(flipud(parula))
     colorbar()
     title("SUR")
 
+    % True function, true boundary (black line), estimated boundary (red line)
+    % initial design (black dots), sequential design (red dots) and chosen
+    % point (yellow dot) for EEM criterion.
     figure (h_monit);  subplot (2, 2, 2);  cla;
     pcolor(x1_grid, x2_grid', reshape(z_grid, n_dim, n_dim)); hold on;
     contour(x1_grid, x2_grid', reshape((z_grid >= z_crit), n_dim, n_dim), 'LineColor', 'black'); hold on;
     contour(x1_grid, x2_grid', reshape((pred_mean_eem >= z_crit), n_dim, n_dim), 'LineColor', 'red'); hold on;
-    scatter(x_obs_eem(:,1), x_obs_eem(:,2), "MarkerFaceColor", "red"); hold on;
+    scatter(x_obs_eem(1:n_init,1), x_obs_eem(1:n_init,2), "MarkerFaceColor", "black"); hold on;
+    scatter(x_obs_eem(n_init+1:n_init+iter,1), x_obs_eem(n_init+1:n_init+iter,2), "MarkerFaceColor", "red"); hold on;
     scatter(xt(i_max,1), xt(i_max,2), 'MarkerFaceColor', 'y');
     colormap(flipud(parula))
     colorbar()
     title("EEM")
 
-    % Figure: lower panels
+    %% Figure: lower panels
+
+    % Plot accuracy vs. number of queried points
     figure (h_monit);  subplot (2, 2, 3);  cla;
-    plot(0:iter, 1-misc_sur, 'LineWidth', 2, 'Color', "red"); hold on;
-    plot(0:iter, 1-misc_eem, 'LineWidth', 2, 'Color', "green");
+    plot(0:iter, accuracy_sur, 'LineWidth', 2, 'Color', "red"); hold on;
+    plot(0:iter, accuracy_eem, 'LineWidth', 2, 'Color', "green");
     xlim([0, NB_ITER])
-    ylim([0 1])
+    xlabel("Queried points")
+    ylim([min([accuracy_sur, accuracy_eem], [], 'all') 1])
     legend('SUR', 'EEM', 'Location','southeast')
     title("Accuracy")
-
+    
+    % Plot total computation time vs. number of queried points
     figure (h_monit);  subplot (2, 2, 4);  cla;
     plot(0:iter, cumsum(time_sur), 'LineWidth', 2, 'Color', "red"); hold on;
     plot(0:iter, cumsum(time_eem), 'LineWidth', 2, 'Color', "green");
     xlim([0, NB_ITER])
-    legend('SUR', 'EEM', 'Location', 'north')
-    title("Cumulative computational time (s)")
+    xlabel("Queried points")
+    legend('SUR', 'EEM', 'Location', 'southeast')
+    title("Total computation time (s)")
 
     if (iter >= NB_ITER)
         break
@@ -221,7 +244,7 @@ for iter = 0:NB_ITER
     x_obs_eem = [x_obs_eem; xt(i_max, :)];
     z_obs_eem = [z_obs_eem; zt(i_max, :)];
 
-    drawnow ();  % pause (0.5);
+    drawnow ();
 end
 
 
